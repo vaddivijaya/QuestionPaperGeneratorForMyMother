@@ -4,12 +4,40 @@ from docx.shared import Inches
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from io import BytesIO
+import requests
 
 st.set_page_config(page_title="Question Paper Maker")
 st.title("📄 Question Paper Maker")
 
-# ---------- Helper: force table borders ----------
+# ---------- Telugu Transliteration ----------
 
+
+def english_to_telugu(text: str) -> str:
+    """
+    Converts English phonetic typing into Telugu script.
+    Example: 'meeru ela unnaru' → 'మీరు ఎలా ఉన్నారు'
+    """
+    try:
+        url = "https://inputtools.google.com/request"
+        params = {
+            "text": text,
+            "itc": "te-t-i0-und",
+            "num": 1
+        }
+
+        response = requests.get(url, params=params)
+        result = response.json()
+
+        if result[0] == "SUCCESS":
+            return result[1][0][1][0]
+
+        return text
+
+    except Exception:
+        return text
+
+
+# ---------- Helper: force table borders ----------
 
 def set_table_borders(table):
     for row in table.rows:
@@ -30,16 +58,19 @@ def set_table_borders(table):
 
 
 # ---------- Upload template ----------
+
 uploaded_template = st.file_uploader(
     "Upload Question Paper Template (.docx)",
     type=["docx"]
 )
 
 # ---------- Session state ----------
+
 if "questions" not in st.session_state:
     st.session_state.questions = []
 
 # ---------- Question type selector ----------
+
 st.subheader("Add Question")
 
 q_type = st.selectbox(
@@ -49,16 +80,47 @@ q_type = st.selectbox(
 
 question_data = None
 
-# ---------- TEXT ----------
-if q_type == "Text":
-    text_q = st.text_input("Enter question text")
-    if text_q:
-        question_data = {"type": "text", "content": text_q}
 
-# ---------- IMAGE ----------
+# ================= TEXT =================
+
+# ================= TEXT =================
+def convert_to_telugu():
+    if st.session_state.telugu_text:
+        converted = "\n".join(
+            english_to_telugu(line)
+            for line in st.session_state.telugu_text.split("\n")
+        )
+        st.session_state.telugu_text = converted
+
+
+if q_type == "Text":
+
+    st.text_input("Enter question text", key="text_q")
+
+    st.text_area("for Telugu Conversion", key="telugu_text")
+
+    st.button("Convert to Telugu", on_click=convert_to_telugu)
+
+    if st.session_state.text_q:
+        question_data = {
+            "type": "text",
+            "content": st.session_state.text_q
+        }
+
+
+# ================= IMAGE =================
+
 elif q_type == "Image":
     img_file = st.file_uploader("Upload image", type=["png", "jpg", "jpeg"])
-    caption = st.text_input("Optional caption")
+    caption = st.text_input("Optional caption", key="img_caption")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("Telugu Caption"):
+            if caption:
+                st.session_state.img_caption = english_to_telugu(caption)
+                st.rerun()
 
     if img_file:
         question_data = {
@@ -67,10 +129,16 @@ elif q_type == "Image":
             "caption": caption
         }
 
-# ---------- MATCH THE FOLLOWING ----------
+
+# ================= MATCH THE FOLLOWING =================
+
 elif q_type == "Match the Following":
-    left = st.text_area("Left items (one per line)")
-    right = st.text_area("Right items (one per line)")
+    left = st.text_area("Left items (one per line)", key="left_text")
+    right = st.text_area("Right items (one per line)", key="right_text")
+
+    st.text_area("for Telugu Conversion", key="telugu_text")
+
+    st.button("Convert to Telugu", on_click=convert_to_telugu)
 
     if left and right:
         question_data = {
@@ -79,7 +147,9 @@ elif q_type == "Match the Following":
             "right": [x.strip() for x in right.split("\n") if x.strip()],
         }
 
-# ---------- ANSWER TABLE ----------
+
+# ================= ANSWER TABLE =================
+
 elif q_type == "Answer Table":
     rows = st.number_input("Rows", 1, 10, 3)
     cols = st.number_input("Columns", 1, 10, 3)
@@ -102,7 +172,9 @@ elif q_type == "Answer Table":
         "data": table_values,
     }
 
+
 # ---------- Add / Clear buttons ----------
+
 col1, col2 = st.columns(2)
 
 with col1:
@@ -118,7 +190,9 @@ with col2:
         st.session_state.questions = []
         st.rerun()
 
+
 # ---------- Show added questions ----------
+
 st.subheader("Questions Added")
 
 if not st.session_state.questions:
@@ -139,7 +213,9 @@ else:
         elif q["type"] == "table":
             st.write(f"{i}. Table ({q['rows']} × {q['cols']})")
 
+
 # ---------- Generate DOCX ----------
+
 st.subheader("Generate Question Paper")
 
 if st.button("📥 Preview & Download DOCX"):
@@ -157,36 +233,27 @@ if st.button("📥 Preview & Download DOCX"):
 
     for i, q in enumerate(st.session_state.questions, 1):
 
-        # TEXT
         if q["type"] == "text":
             doc.add_paragraph(f"{i}. {q['content']}")
 
-        # IMAGE
         elif q["type"] == "image":
             doc.add_paragraph(f"{i}.")
             doc.add_picture(BytesIO(q["image"]), width=Inches(4))
             if q["caption"]:
                 doc.add_paragraph(q["caption"])
 
-        # MATCH THE FOLLOWING (NO BORDERS)
         elif q["type"] == "match":
             doc.add_paragraph(f"{i}. Match the Following:")
-
             rows = max(len(q["left"]), len(q["right"]))
             table = doc.add_table(rows=rows, cols=3)
 
             for r in range(rows):
                 if r < len(q["left"]):
                     table.rows[r].cells[0].text = q["left"][r]
-
-                table.rows[r].cells[1].text = "[   ]"  # answer box
-
+                table.rows[r].cells[1].text = "[   ]"
                 if r < len(q["right"]):
                     table.rows[r].cells[2].text = q["right"][r]
 
-            # ❌ NO BORDER CALL HERE
-
-        # ANSWER TABLE (WITH BORDERS)
         elif q["type"] == "table":
             doc.add_paragraph(f"{i}.")
             table = doc.add_table(rows=q["rows"], cols=q["cols"])
@@ -196,7 +263,7 @@ if st.button("📥 Preview & Download DOCX"):
                     text = q["data"][r][c] if q["data"][r][c] else " "
                     table.rows[r].cells[c].text = text
 
-            set_table_borders(table)  # ✅ borders only here
+            set_table_borders(table)
 
         doc.add_paragraph("")
 
